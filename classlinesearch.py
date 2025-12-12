@@ -208,7 +208,7 @@ def get_windows_from_mask(x, mask, margin=1., ref_width=8.):
         windows = np.delete(windows, -1, axis=0)
     return windows
 
-def fit_baseline(x, y, windows, smooth_size):
+def fit_baseline(x, y, windows, smooth_factor):
     """
     Fit the baseline of the curve ignoring the specified windows.
 
@@ -220,7 +220,7 @@ def fit_baseline(x, y, windows, smooth_size):
         Dependent variable.
     windows : array
         Windows that specify the regions of the data.
-    smooth_size : int
+    smooth_factor : int
         Size of the filter applied for the fitting of the baseline.
 
     Returns
@@ -231,13 +231,13 @@ def fit_baseline(x, y, windows, smooth_size):
     mask = get_mask_from_windows(x, windows)
     x_ = x[mask]
     y_ = y[mask]
-    y_s = rolling_function(np.median, y_, smooth_size)
+    y_s = rolling_function(np.median, y_, smooth_factor)
     s = sum((y_s - y_)**2)
     spl = UnivariateSpline(x_, y_, s=s)
     yf = spl(x)
     return yf
 
-def identify_lines(x, y, smooth_size, ref_width, sigmas, iters=2):
+def identify_lines(x, y, smooth_factor, ref_width, sigmas, iters=2):
     """
     Identify the lines of the spectrum and fit the baseline.
 
@@ -247,7 +247,7 @@ def identify_lines(x, y, smooth_size, ref_width, sigmas, iters=2):
         Frequency.
     y : array
         Intensity.
-    smooth_size : int
+    smooth_factor : int
         Size of the filter applied for the fitting of the baseline.
     line_width : float
         Reference line width for merging close windows.
@@ -261,12 +261,12 @@ def identify_lines(x, y, smooth_size, ref_width, sigmas, iters=2):
     windows: array
         Values of the windows of the identified lines.
     """
-    y_ = rolling_function(np.median, y, smooth_size)  
+    y_ = rolling_function(np.median, y, smooth_factor)  
     for i in range(iters):
         mask = sigma_clip_mask(y-y_, sigmas=sigmas, iters=2)
         windows = get_windows_from_mask(x, ~mask, margin=1.5, ref_width=ref_width)
         if i+1 < iters:
-            y_ = fit_baseline(x, y, windows, smooth_size)  
+            y_ = fit_baseline(x, y, windows, smooth_factor)  
     return windows
 
 def load_spectrum(file, load_fits=False):
@@ -358,7 +358,7 @@ for file in args.file.split(','):
     frequency, intensity, _ = load_spectrum(file)
 
     # Identification of the lines and reduction of the spectrum.
-    windows = identify_lines(frequency, intensity, smooth_size=args.smooth_size,
+    windows = identify_lines(frequency, intensity, smooth_factor=args.smooth_size,
                        ref_width=args.ref_width, sigmas=args.threshold, iters=2)
     intensity_cont = fit_baseline(frequency, intensity, windows, args.smooth_size)
     intensity_red = intensity - intensity_cont
@@ -439,8 +439,8 @@ for file in args.file.split(','):
                     plt.xlabel('frequency (MHz)')
                 if j%5 == 0:
                     plt.ylabel('reduced intensity (K)')
-                plt.xticks(fontsize=6)
-                plt.yticks(fontsize=6)
+                plt.xticks(fontsize=6.)
+                plt.yticks(fontsize=6.)
                 plt.locator_params(axis='x', nbins=1)
                 plt.locator_params(axis='y', nbins=3)
                 plt.ticklabel_format(style='sci', useOffset=False)
@@ -448,7 +448,7 @@ for file in args.file.split(','):
             if num_plots > 1:
                 window_num = ' ({})'.format(i+1)
             plt.suptitle('Identified lines{} - {}'.format(window_num, file),
-                             fontweight='semibold')
+                         fontweight='semibold')
             fig.align_ylabels()
             plt.tight_layout(pad=1.2, h_pad=0.6, w_pad=0.1)
         
