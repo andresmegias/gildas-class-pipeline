@@ -336,7 +336,7 @@ def save_yaml_dict(dictionary, file_path, default_flow_style=False, replace=Fals
 parser = argparse.ArgumentParser()
 parser.add_argument('folder', default='./')
 parser.add_argument('file', default='spectrum.dat')
-parser.add_argument('-smooth_size', default=20, type=int)
+parser.add_argument('-smooth_factor', default=20, type=int)
 parser.add_argument('-ref_width', default=6, type=int)
 parser.add_argument('-threshold', default=6., type=float)
 parser.add_argument('-plots_folder', default='plots', type=str)
@@ -358,9 +358,9 @@ for file in args.file.split(','):
     frequency, intensity, _ = load_spectrum(file)
 
     # Identification of the lines and reduction of the spectrum.
-    windows = identify_lines(frequency, intensity, smooth_factor=args.smooth_size,
+    windows = identify_lines(frequency, intensity, smooth_factor=args.smooth_factor,
                        ref_width=args.ref_width, sigmas=args.threshold, iters=2)
-    intensity_cont = fit_baseline(frequency, intensity, windows, args.smooth_size)
+    intensity_cont = fit_baseline(frequency, intensity, windows, args.smooth_factor)
     intensity_red = intensity - intensity_cont
     
     # Windows.

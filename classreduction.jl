@@ -30,7 +30,7 @@ import StatsBase: mad
 import Interpolations: LinearInterpolation, Line
 import SciPy.interpolate as scipy_interpolate
 import Distributions: Normal
-import Formatting: printfmtln
+import Format: printfmtln
 import ArgParse as argparse
 import YAML as yaml
 import FITSIO as fitsio
@@ -217,7 +217,7 @@ function sigma_clip_mask(y::Vector{Float64}; sigmas::Float64=6.0, iters::Int=2)
 end
 
 function fit_baseline(x::Vector{Float64}, y::Vector{Float64};
-                      windows::Matrix{Float64}, smooth_size::Int)
+                      windows::Matrix{Float64}, smooth_factor::Int)
     """
     Fit the baseline of the curve ignoring the specified windows.
 
@@ -229,7 +229,7 @@ function fit_baseline(x::Vector{Float64}, y::Vector{Float64};
         Dependent variable.
     windows : Matrix
         Windows that specify the regions of the data.
-    smooth_size : Int
+    smooth_factor : Int
         Size of the filter applied for the fitting of the baseline.
 
     Returns
@@ -240,7 +240,7 @@ function fit_baseline(x::Vector{Float64}, y::Vector{Float64};
     mask = get_mask_from_windows(x, windows)
     x_ = x[mask]
     y_ = y[mask]
-    y_s = rolling_function(stats.median, y_, smooth_size)
+    y_s = rolling_function(stats.median, y_, smooth_factor)
     s = sum((y_s - y_).^2)
     spl = scipy_interpolate.UnivariateSpline(x_, y_, s=s)
     yf = spl(x)
@@ -439,7 +439,7 @@ argparse.@add_arg_table! aps begin
     "file"
     arg_type = String
     required = true
-    "--smooth"
+    "--smooth_factor"
     arg_type = Int
     default = 20
     "--rms_margin"
@@ -474,13 +474,14 @@ for file in split(args["file"], ",")
     reference_frequencies[file] = fits_header["RESTFREQ"] / 1e6
     frequency_ranges[file] = [frequency[1], frequency[end]]
     # Reduction.
-    if file in all_windows
+    if haskey(all_windows, file)
         windows = all_windows[file]
-    else:
+    else
         windows = []
+    end
     windows = Matrix(hcat(windows...)')
     intensity_cont = fit_baseline(frequency, intensity, windows=windows,
-                                  smooth_size=args["smooth"])
+                                  smooth_factor=args["smooth_factor"])
     intensity_red = intensity .- intensity_cont
     # Noise.
     rms_noise = get_rms_noise(frequency, intensity_red, windows,
@@ -490,7 +491,7 @@ for file in split(args["file"], ",")
     rms_region =
         find_rms_region(frequency, intensity_red, rms_noise=rms_noise,
                         windows=windows, rms_threshold=0.1,
-                        offset_threshold=0.05, reference_width=2*args["smooth"])
+                        offset_threshold=0.05, reference_width=2*args["smooth_factor"])
     if length(rms_region) == 0
         println("Warning: No RMS region was found for spectrum $file.")
     rms_region = [Float32(frequency[1]), Float32(frequency[end])]

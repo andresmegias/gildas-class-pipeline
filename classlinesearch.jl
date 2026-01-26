@@ -29,7 +29,7 @@ import StatsBase: mad
 import Interpolations: LinearInterpolation, Line
 import SciPy.interpolate as scipy_interpolate
 import Distributions: Normal
-import Formatting: printfmtln
+import Format: printfmtln
 import ArgParse as argparse
 import YAML as yaml
 import FITSIO as fitsio
@@ -225,7 +225,7 @@ function sigma_clip_mask(y::Vector{Float64}; sigmas::Float64=6.0, iters::Int=2)
 end
 
 function fit_baseline(x::Vector{Float64}, y::Vector{Float64};
-                      windows::Matrix{Float64}, smooth_size::Int)
+                      windows::Matrix{Float64}, smooth_factor::Int)
     """
     Fit the baseline of the curve ignoring the specified windows.
 
@@ -237,7 +237,7 @@ function fit_baseline(x::Vector{Float64}, y::Vector{Float64};
         Dependent variable.
     windows : Matrix
         Windows that specify the regions of the data.
-    smooth_size : Int
+    smooth_factor : Int
         Size of the filter applied for the fitting of the baseline.
 
     Returns
@@ -248,14 +248,14 @@ function fit_baseline(x::Vector{Float64}, y::Vector{Float64};
     mask = get_mask_from_windows(x, windows)
     x_ = x[mask]
     y_ = y[mask]
-    y_s = rolling_function(stats.median, y_, smooth_size)
+    y_s = rolling_function(stats.median, y_, smooth_factor)
     s = sum((y_s - y_).^2)
     spl = scipy_interpolate.UnivariateSpline(x_, y_, s=s)
     yf = spl(x)
     return yf
 end
 
-function identify_lines(x::Vector{Float64}, y::Vector{Float64}; smooth_size::Int,
+function identify_lines(x::Vector{Float64}, y::Vector{Float64}; smooth_factor::Int,
     line_width::Float64, sigmas::Float64, iters::Int=2)
     """
     Identify the lines of the spectrum and fits the baseline.
@@ -266,7 +266,7 @@ function identify_lines(x::Vector{Float64}, y::Vector{Float64}; smooth_size::Int
         Frequency.
     y : Vector
         Intensity.
-    smooth_size : Int
+    smooth_factor : Int
         Size of the filter applied for the fitting of the baseline.
     line_width : Float
         Reference line width for merging close windows.
@@ -280,14 +280,14 @@ function identify_lines(x::Vector{Float64}, y::Vector{Float64}; smooth_size::Int
     windows: Matrix
         Values of the windows of the identified lines.
     """
-    local y_ = rolling_function(stats.median, y, smooth_size)
+    local y_ = rolling_function(stats.median, y, smooth_factor)
     local windows
     for i in 1:iters
         mask = sigma_clip_mask(y.-y_, sigmas=sigmas)
         _mask = Vector(.!mask)
         windows = get_windows_from_mask(x, _mask, margin=1.5, ref_width=line_width)
         if i < iters
-            y_ = fit_baseline(x, y, windows=windows, smooth_size=smooth_size)
+            y_ = fit_baseline(x, y, windows=windows, smooth_factor=smooth_factor)
         end
     end
     return windows
@@ -369,7 +369,7 @@ argparse.@add_arg_table! aps begin
     "file"
     arg_type = String
     required = true
-    "--smooth_size"
+    "--smooth_factor"
     arg_type = Int
     default = 20
     "--ref_width"
@@ -403,11 +403,11 @@ for file in split(args["file"], ",")
 
     # Identification of the lines and reduction of the spectrum.
     windows =
-        identify_lines(frequency, intensity, smooth_size=args["smooth_size"],
+        identify_lines(frequency, intensity, smooth_factor=args["smooth_factor"],
                        line_width=args["ref_width"], sigmas=args["threshold"],
                        iters=2)
     intensity_cont = fit_baseline(frequency, intensity, windows=windows,
-                                  smooth_size=args["smooth_size"])
+                                  smooth_factor=args["smooth_factor"])
     intensity_red = intensity .- intensity_cont
 
     # Windows.

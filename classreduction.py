@@ -130,7 +130,7 @@ def sigma_clip_mask(y, sigmas=6.0, iters=2):
         mask *= abs_y < sigmas*mad
     return mask
 
-def fit_baseline(x, y, windows, smooth_size):
+def fit_baseline(x, y, windows, smooth_factor):
     """
     Fit the baseline of the curve ignoring the specified windows.
 
@@ -142,7 +142,7 @@ def fit_baseline(x, y, windows, smooth_size):
         Dependent variable.
     windows : array
         Windows that specify the regions of the data.
-    smooth_size : int
+    smooth_factor : int
         Size of the filter applied for the fitting of the baseline.
 
     Returns
@@ -153,7 +153,7 @@ def fit_baseline(x, y, windows, smooth_size):
     mask = get_mask_from_windows(x, windows)
     x_ = x[mask]
     y_ = y[mask]
-    y_s = rolling_function(np.median, y_, smooth_size)
+    y_s = rolling_function(np.median, y_, smooth_factor)
     s = sum((y_s - y_)**2)
     spl = UnivariateSpline(x_, y_, s=s)
     yf = spl(x)
@@ -346,14 +346,14 @@ def plot_windows(selected_points):
         plt.axvspan(x1, x2, transform=plt.gca().transAxes,
                     color='lightgray', alpha=1., zorder=1.5)
 
-def do_reduction(spectrum, selected_points, smooth_size):
+def do_reduction(spectrum, selected_points, smooth_factor):
     """Reduce the data."""
     if len(selected_points) == 0:
         return
     windows = format_windows(selected_points)
     frequency = spectrum['frequency']
     intensity = spectrum['intensity']
-    baseline = fit_baseline(frequency, intensity, windows, smooth_size)
+    baseline = fit_baseline(frequency, intensity, windows, smooth_factor)
     spectrum['baseline'] = baseline
  
 def plot_data(spectrum):
@@ -500,7 +500,7 @@ def press_key(event):
             elif event.key == 'right':
                 x_lims = [x_lims[0] + x_range/2, x_lims[1] + x_range/2]
     elif event.key in ('r', 'R'):
-        factor = copy.copy(args.smooth)
+        factor = copy.copy(args.smooth_factor)
         if 'R' in event.key:
             text = input('- Enter smoothing factor for baseline: ')
             factor = int(''.join([char for char in text if char.isdigit()]))
@@ -525,7 +525,7 @@ def press_key(event):
 parser = argparse.ArgumentParser()
 parser.add_argument('folder')
 parser.add_argument('file')
-parser.add_argument('-smooth', default=20, type=int)
+parser.add_argument('-smooth_factor', default=20, type=int)
 parser.add_argument('-sigmas', default=4, type=float)
 parser.add_argument('-rms_margin', default=0.1, type=float)
 parser.add_argument('-plots_folder', default='plots')
@@ -577,9 +577,7 @@ for file in args.file.split(','):
         windows = []
     else:
         windows = all_windows[file] if file in all_windows else []
-    if args.smooth > len(frequency):
-        args.smooth = len(frequency)
-    intensity_cont = fit_baseline(frequency, intensity, windows, args.smooth)
+    intensity_cont = fit_baseline(frequency, intensity, windows, args.smooth_factor)
     intensity_red = intensity - intensity_cont
     spectrum = {'frequency': frequency, 'intensity': intensity,
                 'baseline': intensity_cont}
@@ -593,7 +591,7 @@ for file in args.file.split(','):
     yr_lims = [yr_lims[0] - np.diff(yr_lims)/5, yr_lims[1] + np.diff(yr_lims)/5]
     if args.check_windows:
         plt.close('all')
-        plt.figure(1, figsize=(9,7))
+        plt.figure(1, figsize=(9.,7.))
         print('Using manual check of windows.\n'
               ' - Use Z/<, Left/Right or the plot buttons to explore the'
                ' spectrum region.\n'
@@ -628,10 +626,9 @@ for file in args.file.split(','):
     rms_noises[file] = float(1e3*rms_noise)
     # Noise regions.
     if not args.rms_check:
-        rms_region = \
-            find_rms_region(frequency, intensity_red, rms_noise=rms_noise,
-                            windows=windows, rms_threshold=0.1,
-                            offset_threshold=0.05, reference_width=2*args.smooth)
+        rms_region = find_rms_region(frequency, intensity_red, rms_noise=rms_noise,
+                        windows=windows, rms_threshold=0.1, offset_threshold=0.05,
+                        reference_width=2*args.smooth_factor)
         if len(rms_region) == 0:
             print('Warning: No RMS region was found for spectrum {}.'.format(file))
             rms_region = [float(frequency[0]), float(frequency[-1])]
@@ -650,22 +647,28 @@ for file in args.file.split(','):
     print('Saved reduced spectrum in {}{}.fits.'.format(args.folder, output_file))
     print('Saved reduced spectrum in {}{}.dat.'.format(args.folder, output_file))
     
-    if not args.check_windows or args.save_plots:   
-        
+    if not args.check_windows and args.save_plots:
+        plt.close('all')
+        plt.figure(1, figsize=(9.,7.))
         plot_data(spectrum)
-
-        if args.save_plots:
-            quality = 100 if args.rms_check else 200
-            ext = 'png' if args.rms_check else 'pdf'
-            os.chdir(original_folder)
-            os.chdir(os.path.realpath(args.plots_folder))
-            file_name = 'spectrum-{}.{}'.format(file, ext)
-            if args.rms_check:
-                file_name = file_name.replace('spectrum-rms', 'rms-spectrum')
-            plt.savefig(file_name, dpi=quality)
-            os.chdir(original_folder)
-            os.chdir(os.path.realpath(args.folder))       
-            print("    Saved plot in {}{}.".format(args.plots_folder, file_name))
+        plt.suptitle(f'RMS region - {file}', fontweight='bold')
+        os.chdir(original_folder)
+        os.chdir(os.path.realpath(args.plots_folder))
+        dpi = 100 if args.rms_check else 200
+        filename = f'spectrum-{file}.png'
+        if args.rms_check:
+            filename = filename.replace('spectrum-rms', 'rms-spectrum')
+        plt.savefig(filename, dpi=dpi)    
+        print("    Saved plot in {}{}.".format(args.plots_folder, filename))
+        if not args.rms_check:
+            plt.xlim(*rms_region)
+            plt.subplot(2,1,2)
+            plt.ylim(-5*rms_noise, 5*rms_noise)
+            filename = 'rms-' + filename
+        plt.savefig(filename, dpi=dpi)
+        print("    Saved plot in {}{}.".format(args.plots_folder, filename))
+        os.chdir(original_folder)
+        os.chdir(os.path.realpath(args.folder))   
             
     print()
         

@@ -227,6 +227,7 @@ default_options = {
     'data folder': 'input',
     'output folder': 'output',
     'exporting folder': 'exported',
+    'scripts folder': 'scripts',
     'plots folder': 'plots',
     'input files': [],
     'bad scans': [],
@@ -307,6 +308,7 @@ data_folder = options['data folder']
 input_files = options['input files']
 exporting_folder = options['exporting folder']
 output_folder = options['output folder']
+scripts_folder = options['scripts folder']
 plots_folder = options['plots folder']
 default_telescopes = options['default telescopes']
 observatory = options['observatory']
@@ -360,6 +362,8 @@ if not exporting_folder.endswith(sep):
     exporting_folder += sep
 if not output_folder.endswith(sep):
     output_folder += sep
+if not scripts_folder.endswith(sep):
+    scripts_folder += sep
 if not plots_folder.endswith(sep):
     plots_folder += sep
 if len(input_files) == 0 and not args.merging:
@@ -374,18 +378,19 @@ if not only_daily_bad_scans:
     for file in bad_files:
         del input_files[file]
 input_files = {file.replace('--',''): input_files[file] for file in input_files}
+if args.selection:
+    for file in input_files:
+        if not os.path.isfile(full_path(data_folder + file)):
+            raise Exception(f'The file {file} is missing.')
+        if not 'sources-lines-telescopes' in input_files[file]:
+            raise Exception(f'There are no sources specified in file {file}.')
 for file in input_files:
-    if not os.path.isfile(full_path(data_folder + file)):
-        raise Exception(f'The file {file} is missing.')
-    if not 'sources-lines-telescopes' in input_files[file]:
-        raise Exception(f'There are no sources specified in file {file}.')
-    else:
-        sources = input_files[file]['sources-lines-telescopes']
-        for (source, lines) in zip(sources, sources.values()):
-            for line, telescopes in zip(lines, lines.values()):
-                if telescopes == 'default':
-                    (input_files[file]['sources-lines-telescopes'][source]
-                     [line]) = default_telescopes
+    sources = input_files[file]['sources-lines-telescopes']
+    for (source, lines) in zip(sources, sources.values()):
+        for (line, telescopes) in zip(lines, lines.values()):
+            if telescopes == 'default':
+                (input_files[file]['sources-lines-telescopes'][source]
+                 [line]) = default_telescopes
     if not average_all_input_files:
         if not 'note' in input_files[file]:
             raise Exception(f'There is no note for file {file}.')
@@ -399,6 +404,8 @@ if not os.path.isdir(full_path(output_folder)):
     os.makedirs(full_path(output_folder))
 if not os.path.isdir(full_path(output_folder + 'all') + sep):
     os.makedirs(full_path(output_folder + 'all') + sep)
+if not os.path.isdir(full_path(scripts_folder)):
+    os.makedirs(full_path(scripts_folder))
 if not os.path.isdir(full_path(plots_folder)):
     os.makedirs(full_path(plots_folder))
 
@@ -453,8 +460,7 @@ for file in input_files:
                 if (type(bad_scans) == dict and not only_daily_bad_scans
                     and source in bad_scans and line in bad_scans[source]
                         and telescope in bad_scans[source][line]):
-                    bad_scans_i += \
-                        parse_bad_scans(bad_scans[source][line][telescope])
+                    bad_scans_i += parse_bad_scans(bad_scans[source][line][telescope])
                 for scan in set(bad_scans_i):
                     script += ['ignore /scan {}'.format(scan)]
                 # Average.
@@ -549,14 +555,16 @@ if args.selection:
     script = [line + '\n' for line in script]
  
     # Writing of the first class file.
-    with open('selection.class', 'w') as file:
+    with open(scripts_folder + 'selection1-combining.class', 'w') as file:
         file.writelines(script)
 
 # Running of the first class file.
     
     print('\nStarting selection.\n')
 
-    subprocess.run(['class', '@selection.class'])
+    p = subprocess.run(['class', '@'+scripts_folder+'selection1-combining.class'])
+    if p.returncode == 1:
+        sys.exit()
     
     if average_all_input_files:
         for file in output_files:
@@ -584,15 +592,18 @@ if args.selection:
     script = [line + '\n' for line in script]
  
     # Writing of the first class file.
-    with open('selection-doppler.class', 'w') as file:
+    with open(scripts_folder + 'selection2-doppler.class', 'w') as file:
         file.writelines(script)
 
 # Running of the class file for checking the Doppler corrections.
 
     if check_doppler_corrections:
         
-        p = subprocess.Popen(['class', '@selection-doppler.class'],
+        p = subprocess.Popen(['class', '@'+scripts_folder+'selection2-doppler.class'],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if p.returncode == 1:
+            sys.exit()
+            
         doppler_text = []        
         prev_line = ''
         for output in p.stdout:
@@ -656,11 +667,13 @@ if args.selection:
     script = [line + '\n' for line in script]
         
     # Writing of the class file.
-    with open('selection-grouping.class', 'w') as file:
+    with open(scripts_folder + 'selection3-grouping.class', 'w') as file:
         file.writelines(script)
         
     # Running of the class file.
-    subprocess.run(['class', '@selection-grouping.class'])
+    p = subprocess.run(['class', '@'+scripts_folder+'selection3-grouping.class'])
+    if p.returncode == 1:
+        sys.exit()
     
     print()
     print(f'Created CLASS files:    (folder {output_folder})')
@@ -717,7 +730,7 @@ if args.rms_check:
                 
                 if not only_rms_plots:
         
-                    # Class file for selecting desired observations.
+                    # Class file for grouping all desired observations.
                     script = []
                     
                     for (i, file) in enumerate(input_files):
@@ -728,7 +741,6 @@ if args.rms_check:
                         script += ['file out ' + output_file_all]
                         if i == 0:
                             script[-1] += ' m /overwrite'
-                        # Loop for ignoring the bad scans.
                         bad_scans_i = []
                         if type(bad_scans) == list and not only_daily_bad_scans:
                             bad_scans_i += parse_bad_scans(bad_scans)
@@ -740,7 +752,6 @@ if args.rms_check:
                         script += ['set source ' + source]
                         script += ['set line ' + line]
                         script += ['set telescope ' + telescope]
-                        # Bad scans.
                         bad_scans_i = []
                         if (type(bad_scans) == dict and not only_daily_bad_scans
                             and source in bad_scans and line in bad_scans[source]
@@ -749,7 +760,6 @@ if args.rms_check:
                                                            [line][telescope])
                         for scan in set(bad_scans_i):
                             script += ['ignore /scan {}'.format(scan)]
-                        # List of observations.
                         script += ['find /all', 'list'] 
                         if fold_spectra:
                             script += ['fold']
@@ -758,15 +768,15 @@ if args.rms_check:
                         script += ['modify source --{}--{}'.format(i+1,source)]
                         script += ['write', 'next']
                     
-                    # End of the script.
                     script += ['exit']
                     script = [line + '\n' for line in script]
                  
-                    # Writing and running of the class file.
                     os.chdir(config_folder)
-                    with open('rms_check.class', 'w') as file:
+                    with open(scripts_folder + 'rmscheck1-grouping.class', 'w') as file:
                         file.writelines(script)          
-                    subprocess.run(['class', '@rms_check.class'])
+                    p = subprocess.run(['class', '@'+scripts_folder+'rmscheck1-grouping.class'])
+                    if p.returncode == 1:
+                        sys.exit()
                 
                     # Class file for obtaining the information of each
                     # observation.
@@ -777,12 +787,14 @@ if args.rms_check:
                     script += ['exit']
                     script = [line + '\n' for line in script]
                     
-                    with open('rms_check-info.class', 'w') as file:
+                    with open(scripts_folder + 'rmscheck2-info.class', 'w') as file:
                         file.writelines(script)   
                         
-                    p = subprocess.Popen(['class', '@rms_check-info.class'],
-                                         stdout=subprocess.PIPE,
-                                         stderr=subprocess.STDOUT)
+                    p = subprocess.Popen(['class', '@'+scripts_folder+'rmscheck2-info.class'],
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    if p.returncode == 1:
+                        sys.exit()
+                        
                     rms_id = {}
                     list_zone = False
                     file_nums, scan_nums, obs_nums = [], [], []
@@ -827,7 +839,7 @@ if args.rms_check:
                     
                     num_obs = len(obs_nums)
                     
-                    # Class file for grouping the files individually and
+                    # Class file for averaging the files individually and
                     # exporting them.
                     
                     all_rms_spectra = []
@@ -874,12 +886,13 @@ if args.rms_check:
                     script += ['exit']
                     script = [line + '\n' for line in script]
                         
-                    with open('rms_check-ind.class', 'w') as file:
+                    with open(scripts_folder + 'rmscheck3-ind.class', 'w') as file:
                         file.writelines(script)
                         
-                    p = subprocess.Popen(['class', '@rms_check-ind.class'],
-                                         stdout=subprocess.PIPE,
-                                         stderr=subprocess.STDOUT)
+                    p = subprocess.Popen(['class', '@'+scripts_folder+'rmscheck3-ind.class'],
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    if p.returncode == 1:
+                        sys.exit()
                     
                     doppler_text = []
                     prev_line = ''
@@ -895,7 +908,7 @@ if args.rms_check:
                         if 'I-OBSERVATORY' not in text_line:
                             prev_line = text_line
                     
-                    # Class file for grouping the files cumulatively and
+                    # Class file for averaging the files cumulatively and
                     # exporting them.
                     
                     script = []
@@ -940,12 +953,13 @@ if args.rms_check:
                     script += ['exit']
                     script = [line + '\n' for line in script]
                         
-                    with open('rms_check-cum.class', 'w') as file:
+                    with open(scripts_folder + 'rmscheck4-cum.class', 'w') as file:
                         file.writelines(script)
                         
-                    p = subprocess.Popen(['class', '@rms_check-cum.class'],
-                                         stdout=subprocess.PIPE,
-                                         stderr=subprocess.STDOUT)
+                    p = subprocess.Popen(['class', '@'+scripts_folder+'rmscheck4-cum.class'],
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    if p.returncode == 1:
+                        sys.exit()
                     
                     prev_line = ''
                     for text_line in p.stdout:
@@ -986,7 +1000,7 @@ if args.rms_check:
                     
                     os.chdir(original_folder)
                     arguments = ['classreduction.py', config_folder + exporting_folder,
-                                 ','.join(all_rms_spectra), '-smooth', smooth_factor,
+                                 ','.join(all_rms_spectra), '-smooth_factor', smooth_factor,
                                  '-plots_folder', config_folder + plots_folder,
                                   '--rms_check']
                     if local_run:
@@ -997,7 +1011,9 @@ if args.rms_check:
                             arguments[0] = 'py'
                     if save_plots:
                         arguments += ['--save_plots']
-                    subprocess.run(arguments)
+                    p = subprocess.run(arguments)
+                    if p.returncode == 1:
+                        sys.exit()
                     os.chdir(config_folder)
                         
                     # Calibration of the RMS noise and saving of the data.
@@ -1021,7 +1037,7 @@ if args.rms_check:
                     rms_ind, rms_cum = [], []
                     total_spectra = zip(output_spectra_rms['rms_check-ind'+ext],
                                         output_spectra_rms['rms_check-cum'+ext])
-                    for spectrum_ind, spectrum_cum in total_spectra:
+                    for (spectrum_ind, spectrum_cum) in total_spectra:
                         if modify_beam_eff:
                             mean_freq = np.mean(frequency_ranges[spectrum])
                             mean_freq *= to_GHz
@@ -1258,8 +1274,9 @@ if args.rms_check:
                             plt.savefig(filename, dpi=300)
                             print(f'Saved partial RMS noise evolution in {plots_folder}'
                                   f'{filename}.')
-                            
-    plt.close('all')                 
+                     
+    os.chdir(config_folder)  
+    plt.close('all')               
     print()
 
 #%% Line search mode.
@@ -1270,7 +1287,7 @@ if args.line_search:
     if args.use_julia:
         arguments = ['classlinesearch.jl', files_folder, ','.join(all_spectra),
                      '--plots_folder', config_folder + plots_folder,
-                     '--ref_width', ref_width, '--smooth_size', smooth_factor,
+                     '--ref_width', ref_width, '--smooth_factor', smooth_factor,
                      '--threshold', intensity_threshold]
         if local_run:
             os.chdir(original_folder)
@@ -1279,7 +1296,7 @@ if args.line_search:
     else:
         arguments = ['classlinesearch.py', files_folder, ','.join(all_spectra),
                      '-plots_folder', config_folder + plots_folder,
-                     '-ref_width', ref_width, '-smooth_size', smooth_factor,
+                     '-ref_width', ref_width, '-smooth_factor', smooth_factor,
                      '-threshold', intensity_threshold]
         if local_run:
             os.chdir(original_folder)
@@ -1290,7 +1307,9 @@ if args.line_search:
     if save_plots:
         arguments += ['--save_plots']
         
-    subprocess.run(arguments)
+    p = subprocess.run(arguments)
+    if p.returncode == 1:
+        sys.exit()
 
 #%% Reduction mode.
 
@@ -1303,7 +1322,7 @@ if args.reduction:
     if args.use_julia:
         arguments = ['classreduction.jl', files_folder, ','.join(all_spectra),
                      '--plots_folder', config_folder + plots_folder,
-                     '--smooth', smooth_factor,
+                     '--smooth_factor', smooth_factor,
                      '--rms_margin', rms_margin]
         if local_run:
             os.chdir(original_folder)
@@ -1313,7 +1332,7 @@ if args.reduction:
     else:
         arguments = ['classreduction.py', files_folder, ','.join(all_spectra),
                      '-plots_folder', config_folder + plots_folder,
-                     '-smooth', smooth_factor,
+                     '-smooth_factor', smooth_factor,
                      '-rms_margin', rms_margin]
         if local_run:
             os.chdir(original_folder)
@@ -1326,7 +1345,9 @@ if args.reduction:
     if save_plots and not (args.line_search and args.reduction):
         arguments += ['--save_plots']
         
-    subprocess.run(arguments)
+    p = subprocess.run(arguments)
+    if p.returncode == 1:
+        sys.exit()
 
 # Grouping of the files in the original file format and calibration.
  
@@ -1395,11 +1416,13 @@ if args.reduction:
     script += ['exit']
     script = [line + '\n' for line in script]
     # Writing of the class file.
-    with open('reduction-grouping-1.class', 'w') as file:
+    with open(scripts_folder + 'reduction1-grouping1.class', 'w') as file:
         file.writelines(script)
         
     # Running of the class file.
-    subprocess.run(['class', '@reduction-grouping-1.class'])
+    p = subprocess.run(['class', '@'+scripts_folder+'reduction1-grouping1.class'])
+    if p.returncode == 1:
+        sys.exit()
         
 # Creation of a final file.
 
@@ -1429,11 +1452,13 @@ if args.reduction:
     script += ['exit']
     script = [line + '\n' for line in script]
     # Writing of the class file.
-    with open('reduction-grouping-2.class', 'w') as file:
+    with open(scripts_folder + 'reduction2-grouping2.class', 'w') as file:
         file.writelines(script)
         
     # Running of the class file.
-    subprocess.run(['class', '@reduction-grouping-2.class'])
+    p = subprocess.run(['class', '@'+scripts_folder+'reduction2-grouping2.class'])
+    if p.returncode == 1:
+        sys.exit()
     
     print(f'\nCreated CLASS files:    (folder {output_folder})')
     for file in output_files:
@@ -1453,9 +1478,9 @@ if args.averaging:
 
     config_averaging = {}
     config_averaging['extra note'] = extra_note
-    config_averaging['spectra folder'] = exporting_folder
-    config_averaging['output folder'] = output_folder
-    config_averaging['plots folder'] = plots_folder
+    config_averaging['spectra folder'] = f'..{sep}{exporting_folder}'
+    config_averaging['output folder'] = f'..{sep}{output_folder}'
+    config_averaging['plots folder'] = f'..{sep}{plots_folder}'
     config_averaging['class extension'] = ext
     config_averaging['ghost lines'] = options['averaging']['ghost lines']
     config_averaging['averaged spectra'] = options['averaging']['averaged spectra']
@@ -1464,19 +1489,21 @@ if args.averaging:
             options['averaging']['sources-lines-telescopes']
     config_averaging['default telescopes'] = options['default telescopes']
     
-    save_yaml_dict(config_averaging, 'config-averaging-auto.yaml',
+    save_yaml_dict(config_averaging, scripts_folder + 'config-averaging-auto.yaml',
                    default_flow_style=None)
         
     # Running of the script that joints the overlapping spectra.
     os.chdir(original_folder)
-    arguments = ['classaveraging.py', config_folder + sep
+    arguments = ['classaveraging.py', config_folder + scripts_folder
                  + 'config-averaging-auto.yaml']
     if local_run:
         arguments[0] = codes_folder + arguments[0]
         arguments = ['python3'] + arguments
         if args.using_windows_py:
             arguments[0] = 'py'
-    subprocess.run(arguments)
+    p = subprocess.run(arguments)
+    if p.returncode == 1:
+        sys.exit()
 
 #%% Merging mode.
 
@@ -1495,9 +1522,9 @@ if args.merging:
 
     config_merging = {}
     config_merging['extra note'] = extra_note
-    config_merging['spectra folder'] = exporting_folder
-    config_merging['output folder'] = output_folder
-    config_merging['plots folder'] = plots_folder
+    config_merging['spectra folder'] = f'..{sep}{exporting_folder}'
+    config_merging['output folder'] = f'..{sep}{output_folder}'
+    config_merging['plots folder'] = f'..{sep}{plots_folder}'
     
     if 'grouping' in options:
         # Creation of a CLASS script to create a CLASS file containing all the
@@ -1510,9 +1537,11 @@ if args.merging:
                 script += ['find /all', 'list', 'get first', 'write']
         script += ['exit']
         script = [line + '\n' for line in script]
-        with open('merging-grouping.class', 'w') as file:
+        with open(scripts_folder + 'merging-grouping.class', 'w') as file:
             file.writelines(script)
-        subprocess.run(['class', '@merging-grouping.class'])
+        p = subprocess.run(['class', '@'+scripts_folder+'merging-grouping.class'])
+        if p.returncode == 1:
+            sys.exit()
 
     if options['merging'] == 'auto':
         config_merging['input files'] = {}
@@ -1557,18 +1586,20 @@ if args.merging:
     else:
         config_merging['input files'] = options['merging']
 
-    save_yaml_dict(config_merging, 'config-merging-auto.yaml',
+    save_yaml_dict(config_merging, scripts_folder + 'config-merging-auto.yaml',
                    default_flow_style=False)
         
     # Running of the script that joints the overlapping spectra.
     os.chdir(original_folder)
-    arguments = ['classmerging.py', config_folder +sep+'config-merging-auto.yaml']
+    arguments = ['classmerging.py', config_folder + scripts_folder + 'config-merging-auto.yaml']
     if local_run:
         arguments[0] = codes_folder + arguments[0]
         arguments = ['python3'] + arguments
         if args.using_windows_py:
             arguments[0] = 'py'
-    subprocess.run(arguments)
+    p = subprocess.run(arguments)
+    if p.returncode == 1:
+        sys.exit()
 
 #%% Spectra table mode.
 
@@ -1792,15 +1823,14 @@ if args.check_rms_plots:
                 bad_scans[source][line][telescope] = \
                     sorted(bad_scans[source][line][telescope])
                 
-    bad_scans = {'bad scans': bad_scans}
-    
-    os.chdir(config_folder + exporting_folder)
-    
     # Export of the bad scans.
+    bad_scans = {'bad scans': bad_scans}
+    os.chdir(config_folder + exporting_folder)
     save_yaml_dict(bad_scans, 'bad_scans.yaml', default_flow_style=None)
     print()
     print(f'Saved selected bad scans in {exporting_folder}bad_scans.yaml.')
     print()
+    os.chdir(config_folder)
                 
     plt.close('all')
                              
@@ -1813,14 +1843,15 @@ if len(backup_files) != 0:
     for file in backup_files:
         os.remove(file)
         
-temp_files = ['selection.class', 'selection-doppler.class', 'selection-grouping.class',
-              'rms_check-info.class', 'rms_check-ind.class', 'rms_check-cum.class',
-              'reduction-grouping-1.class', 'reduction-grouping-2.class',
-              'config-averaging-auto.yaml', 'averaging.class', 'averaging-grouping.class',
-              'config-merging-auto-yaml', 'merging.class']
-for file in temp_files:
-    if os.path.exists(file):
-        os.remove(file)
+# temp_files = ['selection.class', 'selection-doppler.class', 'selection-grouping.class',
+#               'rms_check-grouping.class', 'rms_check-info.class',
+#               'rms_check-ind.class', 'rms_check-cum.class',
+#               'reduction-grouping-1.class', 'reduction-grouping-2.class',
+#               'config-averaging-auto.yaml', 'averaging.class', 'averaging-grouping.class',
+#               'config-merging-auto.yaml', 'merging.class']
+# for file in temp_files:
+#     if os.path.exists(file):
+#         os.remove(file)
         
 time2 = time.time()
 total_time = int(time2 - time1)
@@ -1832,12 +1863,12 @@ if minutes == 0:
         text = text.replace('0 s', 'less than 1 s')
 phases = []
 
-for arg, descr in zip([args.selection, args.line_search, args.reduction,
-                       args.merging, args.averaging, args.spectra_tables,
-                       args.rms_check, args.check_rms_plots],
-                      ['selection', 'line search', 'reduction',
-                       'merging', 'averaging', 'spectra table', 'rms check',
-                       'checking of rms plots']):
+for (arg, descr) in zip([args.selection, args.line_search, args.reduction,
+                         args.merging, args.averaging, args.spectra_tables,
+                         args.rms_check, args.check_rms_plots],
+                        ['selection', 'line search', 'reduction',
+                         'merging', 'averaging', 'spectra table', 'rms check',
+                         'checking of rms plots']):
     if arg:
         phases += [descr]
         
