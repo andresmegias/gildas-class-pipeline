@@ -536,6 +536,18 @@ args = parser.parse_args()
 original_folder = os.path.realpath(os.getcwd())
 os.chdir(args.folder)
 
+# Instructions for interactive mode.
+instructions = \
+"""
+Using manual check of windows.
+- Use Z/<, Left/Right or the plot buttons to explore the spectrum region.
+- Left/Right click to add/remove a window edge.
+- Press Tab to remove all the windows.
+- Press Ctrl+Z / Ctrl+Shift+Z to undo/redo.
+- Press R / Shift+R to reduce the spectrum using the current windows.
+- Press Enter to accept the reduction and continue.
+"""
+
 # Change backend and remove keymaps for interactive mode.
 if args.check_windows:
     if not platform.platform().startswith('macOS'):
@@ -592,14 +604,7 @@ for file in args.file.split(','):
     if args.check_windows:
         plt.close('all')
         plt.figure(1, figsize=(9.,7.))
-        print('Using manual check of windows.\n'
-              ' - Use Z/<, Left/Right or the plot buttons to explore the'
-               ' spectrum region.\n'
-              ' - Left/Right click to add/remove a window edge.\n'
-              ' - Press Tab to remove all the windows.\n'
-              ' - Press Ctrl+Z / Ctrl+Shift+Z to undo/redo.\n'
-              ' - Press R / Shift+R to reduce the spectrum using the current windows.\n'
-              ' - Press Enter to accept the reduction and continue.\n')
+        print(instructions)
         ilog = 0
         windows_copy = copy.copy(windows)
         data = {'spectrum': spectrum, 'selected_points': selected_points}
