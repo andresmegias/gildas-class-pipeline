@@ -535,6 +535,9 @@ parser.add_argument('--rms_check', action='store_true')
 args = parser.parse_args()
 original_folder = os.path.realpath(os.getcwd())
 os.chdir(args.folder)
+sep = '\\' if platform.system() == 'Windows' else '/'
+if not args.folder.endswith(sep):
+    args.folder += sep
 
 # Instructions for interactive mode.
 instructions = \
