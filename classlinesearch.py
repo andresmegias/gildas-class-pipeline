@@ -345,7 +345,9 @@ parser.add_argument('--check_windows', action='store_true')
 args = parser.parse_args()
 original_folder = full_path(os.getcwd())
 os.chdir(full_path(args.folder))
-np.seterr('raise')
+sep = '\\' if platform.system() == 'Windows' else '/'
+if not args.folder.endswith(sep):
+    args.folder += sep
     
 #%% Calculations.
 
