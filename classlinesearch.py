@@ -356,6 +356,8 @@ windows_dict = {}
 
 # Processing of each spectrum.
 for file in args.file.split(','):
+    if file.endswith('.dat'):
+        file = file.split('.dat')[0]
 
     # Loading of the data file.
     frequency, intensity, _ = load_spectrum(file)
