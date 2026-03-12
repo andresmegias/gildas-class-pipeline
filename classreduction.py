@@ -580,6 +580,8 @@ rms_regions = {}
 resolutions = {}
 
 for file in args.file.split(','):
+    if file.endswith('.dat'):
+        file = file.split('.dat')[0]
     
     # Loading of the data file.
     frequency, intensity, hdul = load_spectrum(file, load_fits=True)
