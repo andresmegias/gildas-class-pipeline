@@ -4,7 +4,7 @@
 Automated GILDAS-CLASS Pipeline
 -------------------------------
 Line search mode
-Version 1.4
+Version 1.5
 
 Copyright (C) 2025 - Andrés Megías Toledano
 
@@ -24,10 +24,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 # Libraries and functions.
 import os
 import gc
+import sys
 import platform
 import argparse
+import subprocess
 import yaml
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from astropy.io import fits
 from scipy.stats import median_abs_deviation
@@ -97,35 +100,13 @@ def rolling_function(func, y, size, **kwargs):
 
     Returns
     -------
-    y_f : array
+    yr : array
         Resultant array.
     """
-    def rolling_window(y, window):
-        """
-        Group the input data according to the specified window size.
-        
-        Function by Erik Rigtorp.
-        """
-        shape = y.shape[:-1] + (y.shape[-1] - window + 1, window)
-        strides = y.strides + (y.strides[-1],)
-        y_w = np.lib.stride_tricks.as_strided(y, shape=shape, strides=strides)
-        return y_w
-    min_size = 1
-    size = int(size) + (int(size) + 1) % 2
-    size = max(min_size, size)
-    N = len(y)
-    y_c = func(rolling_window(y, size), -1, **kwargs)
-    M = min(N, size) // 2
-    y_1, y_2 = np.zeros(M), np.zeros(M)
-    for i in range(M):
-        j1 = 0
-        j2 = max(min_size, 2*i)
-        y_1[i] = func(y[j1:j2], **kwargs)
-        j1 = N - max(min_size, 2*i)
-        j2 = N
-        y_2[-i-1] = func(y[j1:j2], **kwargs)
-    y_f = np.concatenate((y_1, y_c, y_2))
-    return y_f
+    yp = pd.Series(y)
+    ypr = pd.Series(yp).rolling(size, min_periods=1, center=True)
+    yr = ypr.apply(lambda x: func(x, **kwargs)).values
+    return yr
 
 def sigma_clip_mask(y, sigmas=6.0, iters=2):
     """
@@ -270,13 +251,13 @@ def identify_lines(x, y, smooth_factor, ref_width, sigmas, iters=2):
             y_ = fit_baseline(x, y, windows, smooth_factor)  
     return windows
 
-def load_spectrum(file, load_fits=False):
+def load_spectrum(filename, load_fits=False):
     """
     Load the spectrum from the given input file.
 
     Parameters
     ----------
-    file : str
+    filename : str
         Path of the plain text file (.dat) to load, without the extension.
     load_fits : bool
         If True, load also a .fits file and return the HDU list. 
@@ -290,16 +271,18 @@ def load_spectrum(file, load_fits=False):
     hdul : HDU list (astropy)
         List of the HDUs (Header Data Unit).
     """
-    data = np.loadtxt(file + '.dat')
+    data = np.loadtxt(f'{filename}.dat')
     x = data[:,0]
     y = data[:,1]
     if np.sum(np.isnan(data)) != 0:
-        raise Exception('Data of file {} is corrupted.'.format(file))
+        raise Exception(f'Data of file {filename} is corrupted.')
     if load_fits:
-        hdul = fits.open(file + '.fits')
+        hdul = fits.open(f'{filename}.fits')
+        if 'BLANK' in hdul[0].header:
+            del hdul[0].header['BLANK']
+        return x, y, hdul
     else:
-        hdul = None
-    return x, y, hdul
+        return x, y
     
 
 def save_yaml_dict(dictionary, file_path, default_flow_style=False, replace=False):
@@ -335,14 +318,13 @@ def save_yaml_dict(dictionary, file_path, default_flow_style=False, replace=Fals
 
 # Arguments.
 parser = argparse.ArgumentParser()
-parser.add_argument('folder', default='./')
-parser.add_argument('file', default='spectrum.dat')
+parser.add_argument('filenames')
+parser.add_argument('-folder', default='.', type=str)
 parser.add_argument('-smooth_factor', default=20, type=int)
 parser.add_argument('-ref_width', default=6, type=int)
-parser.add_argument('-threshold', default=6., type=float)
+parser.add_argument('-line_sigmas', default=8., type=float)
 parser.add_argument('-plots_folder', default='plots', type=str)
 parser.add_argument('--save_plots', action='store_true')
-parser.add_argument('--check_windows', action='store_true')
 args = parser.parse_args()
 original_folder = full_path(os.getcwd())
 os.chdir(full_path(args.folder))
@@ -353,28 +335,45 @@ if not args.folder.endswith(sep):
 #%% Calculations.
 
 windows_dict = {}
+filenames = args.filename.split(',')
+num_files = len(filenames)
 
 # Processing of each spectrum.
-for file in args.file.split(','):
-    if file.endswith('.dat'):
-        file = file.split('.dat')[0]
+for filename in filenames:
 
+    # Remove extension.
+    ext = filename.split('.')[-1] if '.' in filename else ''
+    if ext != '':
+        filename = filename[:-len(ext)-1]
+    # If .dat file does not exist, export it from CLASS file.
+    if not os.path.exists(f'{filename}.dat'):
+        script = [f'file in {filename}', 'find /all', 'list', 'get first',
+                  f'greg {filename}.dat /formatted']
+        script = [line + '\n' for line in script] + ['exit']
+        with open('linesearch-input.class', 'w') as file:
+            file.writelines(script)
+        p = subprocess.run(['class', '@linesearch-input.class'])
+        print()
+        if p.returncode == 1:
+            sys.exit()
     # Loading of the data file.
-    frequency, intensity, _ = load_spectrum(file)
+    frequency, intensity = load_spectrum(filename)
 
     # Identification of the lines and reduction of the spectrum.
     windows = identify_lines(frequency, intensity, smooth_factor=args.smooth_factor,
-                       ref_width=args.ref_width, sigmas=args.threshold, iters=2)
+                       ref_width=args.ref_width, sigmas=args.line_sigmas, iters=2)
     intensity_cont = fit_baseline(frequency, intensity, windows, args.smooth_factor)
     intensity_red = intensity - intensity_cont
     
     # Windows.
     if len(windows) != 0:
-        print('{} windows identified for {}.'.format(str(len(windows)), file))
+        num_windows = len(windows)
+        print(f'{num_windows} windows identified for {filename}.')
     else:
         windows = np.array([])
-        print('No lines identified for {}.'.format(file))
-    windows_dict[file] = [[x1, x2] for x1, x2 in windows.tolist()]
+        print(f'No lines identified for {filename}.')
+    windows_dict[filename] = [[round(float(x1), 6), round(float(x2), 6)]
+                          for x1, x2 in windows.tolist()]
     
     gc.collect()
         
@@ -403,7 +402,7 @@ for file in args.file.split(','):
         plt.xlabel('frequency (MHz)')
         plt.ylabel('original intensity (K)')
         plt.legend(loc='upper right')
-        plt.title('Full spectrum - {}'.format(file), fontweight='semibold', pad=12.)
+        plt.title(f'Full spectrum - {filename}', fontweight='semibold', pad=12.)
     
         plt.subplot(2,1,2, sharex=sp1)
         for (x1, x2) in windows:
@@ -449,10 +448,8 @@ for file in args.file.split(','):
                 plt.locator_params(axis='x', nbins=1)
                 plt.locator_params(axis='y', nbins=3)
                 plt.ticklabel_format(style='sci', useOffset=False)
-            window_num = ''
-            if num_plots > 1:
-                window_num = ' ({})'.format(i+1)
-            plt.suptitle('Identified lines{} - {}'.format(window_num, file),
+            window_num = f' ({i+1})' if num_plots > 1 else ''
+            plt.suptitle(f'Identified lines{window_num} - {filename}',
                          fontweight='semibold')
             fig.align_ylabels()
             plt.tight_layout(pad=1.2, h_pad=0.6, w_pad=0.1)
@@ -461,14 +458,12 @@ for file in args.file.split(','):
             os.chdir(original_folder)
             os.chdir(full_path(args.plots_folder))
             plt.figure(1)
-            plt.savefig('spectrum-{}.png'.format(file))
-            print("    Saved plot in {}spectrum-{}.png."
-                  .format(args.plots_folder, file))
+            plt.savefig(f'spectrum-{filename}.png')
+            print(f"    Saved plot in {args.plots_folder}spectrum-{filename}.png.")
             for i in range(num_plots):
                 plt.figure(2+i)
-                plt.savefig('lines-{}_{}.png'.format(file, i+1))
-                print("    Saved plot in {}lines-{}_{}.png."
-                      .format(args.plots_folder, file, i+1))
+                plt.savefig(f'lines-{filename}_{i+1}.png')
+                print(f"    Saved plot in {args.plots_folder}lines-{filename}_{i+1}.png.")
             print()
             os.chdir(original_folder)
             os.chdir(full_path(args.folder))
@@ -479,6 +474,10 @@ for file in args.file.split(','):
     
 # Export of the frequency windows of each spectrum.
 save_yaml_dict(windows_dict, 'frequency_windows.yaml', default_flow_style=None)
-print('Saved windows in {}frequency_windows.yaml.'.format(args.folder))
+print(f'Saved windows in {args.folder}frequency_windows.yaml.')
+
+# Remove temporal CLASS file.
+if os.path.exists('linesearch-input.class'):
+    os.remove('linesearch-input.class')
 
 print()
